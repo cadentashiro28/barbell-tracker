@@ -74,19 +74,38 @@ The main performance metrics extracted from each lift are: Acceleration Velocity
 
 Total acceleration is calculated through the summation of acceleration across all axes, and drift is described by the non vertical acceleration axes. Pitch and roll can help to describe forward and backward lean, and lateral lean, and are calculated through the use of the Kalman filter.
 
-Velocity presents a problem as it is not directly measured by the MPU6050. A 
+Velocity presents a problem as it is not directly measured by the MPU6050. An Euler-step approach is currently used to integrate the acceleration data along the vertical axis to calculate vertical veocity. Ideally, a rectangular integration step looks like
+```ruby
+v[i] = v[i - 1] + az[i] * dt
+```
+The true acceleration signal is a continuous function, knowing this, the Euler-step approach introduces error through approximation. Other approaches should be investigated, one simple change is the trapezoidal approach which aims to represent the continous nature of the signal by averaging the change in accelerations.
+```ruby
+v[i] = .5 * v[i - 1] + az[i] * dt
+```
+
+A key consideration of any step approach is the time step itself. Ideally dt would equal the sample rate, however, dropped packets introduce gaps in integration that need to be handled carefully.
 
 ### Handling Packet Loss
+Each data point, however, contains a timestamp, giving the exact millisecond that the data point was taken. Thus, dt can be calculated as follows
+```ruby
+dt = t[i] - t[i - 1]
+```
+Recall that the acceleration signal is continuous, if many packets are lost, integration is innacurate, due to the inability to predict the behavior of the acceleration signal in the lost time. Therefore, a threshold of timeloss is established.
+```ruby
+if dt > .05:  # 50 milliseconds
+  v[i] = v[i - 1]
+  continue
+```
 
 ### Filtering for Rep Detection
+The raw acceleration data contains high frequency movement that is extraneous to counting repetitions. This data is important for measuring peak values around the reversal, however, for purely counting reps, only a small frequency range is needed.
+
+
 
 ### Kalmann Filter (Sensor Fusion)
 
-
-### Data Visualization
-
 ### Saving Data
-
+Each session is saved to a .csv file containing 
 
 
 ## Results
