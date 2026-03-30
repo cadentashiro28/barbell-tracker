@@ -100,9 +100,14 @@ if dt > .05:  # 50 milliseconds
 ### Filtering for Rep Detection
 The raw acceleration data contains high frequency movement that is extraneous to counting repetitions. This data is important for measuring peak values around the reversal, however, for purely counting reps, only a small frequency range is needed.
 
+First, the frequencies in the raw data were analyzed using Python's fast fourier transform. Next, high and low filter cutoffs were established to isolate the foundational frequency of the movement. Different movements displayed different frequency patterns, so the specific cutoffs for each movement pattern was stored. 
+
+Finally, the number of reps could be counted from the filtered acceleration signal by counting the number of occurences where acceleration went from a negative peak to a positive peak. In other words, the concentric phase of motion.
 
 
 ### Kalmann Filter (Sensor Fusion)
+
+
 
 ### Saving Data
 Each session is saved to a .csv file containing 
