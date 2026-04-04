@@ -11,10 +11,10 @@ from datetime import datetime
 
 CHARACTERISTIC_UUID = "abcd1234-ab12-ab12-ab12-abcdef123456"
 BATCH_SIZE = 5
-DURATION    = 5
+DURATION    = 10
 BAR_WEIGHT  = 135   # lbs
 BODY_WEIGHT = 175   # lbs
-KG_TO_LBS   = 0.453592
+LBS_TO_KG   = 0.453592
 AZ_OFFSET   = 0
 LIFT        = 'bench'
 
@@ -209,8 +209,8 @@ class KalmanFilter:
         S            = self.P[0][0] + self.R_measure
         K            = [self.P[0][0] / S, self.P[1][0] / S]
         y            = accel_angle - self.angle
-        self.angle  += K[0] * y
-        self.bias   += K[1] * y
+        self.angle   += K[0] * y
+        self.bias    += K[1] * y
         P00          = self.P[0][0]
         P01          = self.P[0][1]
         self.P[0][0] -= K[0] * P00
@@ -270,10 +270,25 @@ def kalman_process(ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw, t):
 
     return ax_corrected, ay_corrected, az_corrected, pitch, roll
 
+def integrate_axis(in_axis, t, profile, use_zvr=True):
+    out_axis = np.zeros(len(in_axis))
+    for i in range(1, len(in_axis)):
+        dt = t[i] - t[i - 1]
+        if dt > 0.05:
+            out_axis[i] = out_axis[i - 1]
+            continue
+        out_axis[i] = out_axis[i - 1] + in_axis[i] * dt
+        
+    return out_axis
+    
 def process_signal(ax_raw, ay_raw, az_raw):
+    if len(az_raw) == 0:
+        print("No data")
+        return None
+    
     profile   = LIFT_PROFILES[LIFT]
     mass_type = profile['mass']
-    m = (BAR_WEIGHT if mass_type == 'bar only' else BAR_WEIGHT + BODY_WEIGHT) * KG_TO_LBS
+    m = (BAR_WEIGHT if mass_type == 'bar only' else BAR_WEIGHT + BODY_WEIGHT) * LBS_TO_KG
 
     t      = np.array(timestamps) / 1000.0
     t      = t - t[0]
@@ -297,16 +312,17 @@ def process_signal(ax_raw, ay_raw, az_raw):
 
     # Resultant acceleration
     a = np.sqrt(ax**2 + ay**2 + az**2)
-
+    
     # Velocity from vertical axis with zero velocity reset
-    v = np.zeros(len(az))
-    for i in range(1, len(az)):
-        dt = t[i] - t[i - 1]
-        if dt > 0.05:
-            continue
-        v[i] = v[i - 1] + az[i] * dt
-        if abs(az[i]) < profile['zvr']:
+    vx = integrate_axis(ax, t, profile)
+    vy = integrate_axis(ay, t, profile)
+    vz = integrate_axis(az, t, profile)
+
+    v = np.sqrt(vx ** 2 + vy ** 2 + vz ** 2)
+    for i in range(len(v)):
+        if abs(a[i]) < profile['zvr']:  # Rationale, if bar is practically still
             v[i] = 0.0
+
 
     # Rep detection on heavily filtered vertical axis
     az_reps = apply_filters(
@@ -319,14 +335,39 @@ def process_signal(ax_raw, ay_raw, az_raw):
     print(f"Reps detected  : {len(reps)}")
 
     # Bar path
-    vx = np.cumsum(ax) * (1 / fs)
-    vy = np.cumsum(ay) * (1 / fs)
-    dx = np.cumsum(vx) * (1 / fs)
-    dy = np.cumsum(vy) * (1 / fs)
+    dx = integrate_axis(vx, t, profile, use_zvr = False)
+    dy = integrate_axis(vy, t, profile, use_zvr = False)
     print(f"Max fwd/back drift : {np.max(np.abs(dx)):.3f} m")
     print(f"Max lateral drift  : {np.max(np.abs(dy)):.3f} m")
 
     return t, ax, ay, az, a, v, m, reps, pitch, roll
+
+def calibrate_kalman(ax_raw, ay_raw, az_raw, gx_raw, gy_raw):
+    if len(ax_raw) == 0:
+        print("No data")
+        return
+
+    ax = np.array(ax_raw, dtype=float)
+    ay = np.array(ay_raw, dtype=float)
+    az = np.array(az_raw, dtype=float)
+    gx = np.array(gx_raw, dtype=float)
+    gy = np.array(gy_raw, dtype=float)
+
+    pitch_accel = np.arctan2(ax, np.sqrt(ay**2 + az**2))
+    roll_accel  = np.arctan2(ay, np.sqrt(ax**2 + az**2))
+
+    R_pitch   = np.var(pitch_accel)
+    R_roll    = np.var(roll_accel)
+    R_measure = np.mean([R_pitch, R_roll])
+    Q_bias    = np.mean([np.var(gx), np.var(gy)])
+
+    print(f"\n--- Kalman Calibration ---")
+    print(f"R_pitch   : {R_pitch:.6f} rad²")
+    print(f"R_roll    : {R_roll:.6f} rad²")
+    print(f"R_measure : {R_measure:.6f} rad²")
+    print(f"Q_bias    : {Q_bias:.6f} rad²/s²")
+    print(f"\nPaste into KalmanFilter:")
+    print(f"KalmanFilter(Q_angle=0.001, Q_bias={Q_bias:.6f}, R_measure={R_measure:.6f})")
 
 # ─── Metrics ──────────────────────────────────────────────────────────────────
 
@@ -451,11 +492,8 @@ def save_session(reps, a, v, m):
 
 asyncio.run(main())
 
-if len(az_raw) == 0:
-    print("No data received.")
-    exit()
-
 t, ax, ay, az, a, v, m, reps, pitch, roll = process_signal(ax_raw, ay_raw, az_raw)
+calibrate_kalman(ax_raw, ay_raw, az_raw, gx_raw, gy_raw)
 get_metrics(a, v, m, reps)
 plot_avp(t, a, v, m, reps)
 plot_multiaxis(t, ax, ay, az, reps)
