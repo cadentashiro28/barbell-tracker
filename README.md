@@ -44,7 +44,7 @@ A real-time barbell tracking system using an ESP32 and MPU6050 IMU
   Increasing range increases effects of quantization, as MPU6050 has a 16-bit ADC, but are negligible (micro g's).
   
 ### Gyroscope Range
-At 250 degrees, powerlifting may result in hyper rotation of the bar during catch movements that would result in gyroscope readings clipping
+Set at lowest range to maximize the resolution of readings. May consider increasing range for tracking powerlifting movements where bar rotation is more pronounced.
 
 ### Accelerometer Calibration
 Offset values were found and applied by taking accelerometer readings while the MPU6050 was stationary and upright
