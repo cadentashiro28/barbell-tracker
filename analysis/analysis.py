@@ -6,10 +6,13 @@ from scipy.signal import butter, filtfilt, find_peaks
 from scipy.fft import fft, fftfreq
 import csv
 from datetime import datetime
+import sys
+import os
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 CHARACTERISTIC_UUID = "abcd1234-ab12-ab12-ab12-abcdef123456"
+CALIBRATE = False
 BATCH_SIZE = 5
 DURATION    = 10
 BAR_WEIGHT  = 135   # lbs
@@ -30,7 +33,7 @@ LIFT_PROFILES = {
     'bench': {
         'rep_low':    0.2,
         'rep_high':   1.0,
-        'meas_low':   0.5,
+        'meas_low':   .5,
         'meas_high':  15.0,
         'mass':       'bar only',
         'zvr':        0.05,
@@ -188,7 +191,7 @@ class KalmanFilter:
     Fuses accelerometer and gyroscope to estimate bar angle.
     State: [angle, gyro_bias]
     """
-    def __init__(self, Q_angle=0.001, Q_bias=0.003, R_measure=0.03):
+    def __init__(self, Q_angle=0.001, Q_bias=0.000025, R_measure=0.000004):
         self.Q_angle   = Q_angle
         self.Q_bias    = Q_bias
         self.R_measure = R_measure
@@ -390,7 +393,7 @@ def get_metrics(a, v, m, reps):
 
 # ─── Display Data ────────────────────────────────────────────────────────────────────
 
-def plot_avp(t, a, v, m, reps):
+def plot_avp(t, a, v, m, reps, filepath):
     fig, axes = plt.subplots(3, 1, figsize=(10, 8))
     plots = [
         (a,       'Acceleration (m/s²)', 'steelblue'),
@@ -406,9 +409,12 @@ def plot_avp(t, a, v, m, reps):
             ax.axvspan(rep['start_time'], rep['end_time'], alpha=0.15, color='gold')
     axes[0].set_title(f"{LIFT.capitalize()} — {len(reps)} reps")
     plt.tight_layout()
+    path = os.path.join(filepath, f"{LIFT}_AVP.png")
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    print(f"AVP Plot saved to {path}")
     plt.show()
 
-def plot_multiaxis(t, ax, ay, az, reps):
+def plot_multiaxis(t, ax, ay, az, reps, filepath):
     fig, axes = plt.subplots(3, 1, figsize=(12, 10))
     plots = [
         (az, 'Vertical (m/s²)',       'steelblue'),
@@ -424,9 +430,12 @@ def plot_multiaxis(t, ax, ay, az, reps):
             axis.axvspan(rep['start_time'], rep['end_time'], alpha=0.15, color='gold')
     axes[0].set_title("Multi-Axis Analysis")
     plt.tight_layout()
+    path = os.path.join(filepath, f"{LIFT}_multiaxis.png")
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    print(f"Multiaxis Plot saved to {path}")
     plt.show()
 
-def plot_fft(signal, fs, title="Frequency Spectrum"):
+def plot_fft(signal, fs, filepath, title='Frequency Spectrum'):
     N  = len(signal)
     yf = np.abs(fft(signal))[:N // 2]
     xf = fftfreq(N, 1 / fs)[:N // 2]
@@ -438,9 +447,13 @@ def plot_fft(signal, fs, title="Frequency Spectrum"):
     plt.ylabel("Magnitude")
     plt.grid(True)
     plt.tight_layout()
+    type = title.split()[0].lower()
+    path = os.path.join(filepath, f"{LIFT}_fft_{type}.png")
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    print(f"FFT Plot saved to {path}")
     plt.show()
 
-def plot_angles(t, pitch, roll, reps):
+def plot_angles(t, pitch, roll, reps, filepath):
     fig, axes = plt.subplots(2, 1, figsize=(10, 6))
     plots = [
         (np.degrees(pitch), 'Pitch — Fwd/Back (°)', 'tomato'),
@@ -455,18 +468,29 @@ def plot_angles(t, pitch, roll, reps):
             ax.axvspan(rep['start_time'], rep['end_time'], alpha=0.15, color='gold')
     axes[0].set_title("Bar Angle (Kalman Filtered)")
     plt.tight_layout()
+    path = os.path.join(filepath, f"{LIFT}_angles.png")
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    print(f"Angles Plot saved to {path}")
     plt.show()
 
 def save_session(reps, a, v, m):
-    filename = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    sessions_dir = "sessions"
+    os.makedirs(sessions_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
+    session_dir = os.path.join(sessions_dir, f"session_{timestamp}")
+    os.makedirs(session_dir)
+
+    csv_filename  = os.path.join(session_dir, "metrics.csv")
+
     if not reps:
         print("No reps to save")
         return
 
     baseline_vel = np.max(np.abs(v[reps[0]['start_idx']:reps[0]['end_idx']]))
 
-    with open(filename, 'w', newline='') as f:
+    with open(csv_filename, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['rep', 'duration', 'peak_accel', 'peak_vel', 'peak_power', 'velocity_loss_%'])
 
@@ -487,17 +511,23 @@ def save_session(reps, a, v, m):
                 round(vel_loss, 1)
             ])
 
-    print(f"Session saved to {filename}")
+    print(f"Session saved to {csv_filename}")
+    return session_dir
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 asyncio.run(main())
 
 t, ax, ay, az, a, v, m, reps, pitch, roll = process_signal(ax_raw, ay_raw, az_raw)
-calibrate_kalman(ax_raw, ay_raw, az_raw, gx_raw, gy_raw)
-get_metrics(a, v, m, reps)
-plot_avp(t, a, v, m, reps)
-plot_multiaxis(t, ax, ay, az, reps)
-plot_angles(t, pitch, roll, reps)
-save_session(reps, a, v, m)
+fs_actual = len(a) / t[-1]
 
-# plot_fft(az, fs=len(az)/t[-1], title="Filtered Vertical Spectrum")
+if (CALIBRATE):
+    calibrate_kalman(ax_raw, ay_raw, az_raw, gx_raw, gy_raw)
+    sys.exit()
+get_metrics(a, v, m, reps)
+filename = save_session(reps, a, v, m)
+plot_avp(t, a, v, m, reps, filename)
+plot_multiaxis(t, ax, ay, az, reps, filename)
+plot_angles(t, pitch, roll, reps, filename)
+plot_fft(az, fs_actual, filename, title="Vertical Axis Spectrum")
+plot_fft(ax, fs_actual, filename, title="Forward_Back Axis Spectrum")
+plot_fft(ay, fs_actual, filename, title="Lateral Axis Spectrum")
